@@ -1,48 +1,19 @@
 #include <iostream>
 #include <string.h>
 #include <errno.h>
+#include <signal.h>
 #include <unistd.h>
+#include <stdlib.h>
 #include <sys/types.h>
 #include <string>
 #include <sys/socket.h>
+#include <net/ethernet.h>
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
 using namespace std;
-bool analyData(char* dataBuf, int dataLen)
-{
-//    struct in_addr addr;
-//    struct iphdr* pIpHdr = (struct iphdr*)dataBuf;
-//    cout<<"ip length:"<<pIpHdr->ihl * 4<<endl;
-//    addr.s_addr = pIpHdr->daddr;
-//    cout<<"destination host:"<<inet_ntoa(addr)<<endl;
-//    addr.s_addr = pIpHdr->saddr;
-//    cout<<"source host:"<<inet_ntoa(addr)<<endl;
-//    cout<<(int)pIpHdr->protocol<<endl;
-//    cout<<pIpHdr->version<<endl;
 
-    //cout<<ntohs(pIpHdr->tot_len)<<"\t"<<dataLen<<endl;
-    struct iphdr* pIpHdr;
-    struct icmphdr* pIcmpHdr;
-    pIpHdr  = (struct iphdr*)dataBuf;
-    if(((int)pIpHdr->protocol) == IPPROTO_ICMP)
-    {
-        pIcmpHdr = (struct icmphdr*)(dataBuf + pIpHdr->ihl * 4);
-        #define ICMP_ECHOREPLY		0	/* Echo Reply			*/
-#define ICMP_DEST_UNREACH	3	/* Destination Unreachable	*/
-#define ICMP_SOURCE_QUENCH	4	/* Source Quench		*/
-#define ICMP_REDIRECT		5	/* Redirect (change route)	*/
-#define ICMP_ECHO		8	/* Echo Request			*/
-#define ICMP_TIME_EXCEEDED	11	/* Time Exceeded		*/
-#define ICMP_PARAMETERPROB	12	/* Parameter Problem		*/
-#define ICMP_TIMESTAMP		13	/* Timestamp Request		*/
-#define ICMP_TIMESTAMPREPLY	14	/* Timestamp Reply		*/
-#define ICMP_INFO_REQUEST	15	/* Information Request		*/
-#define ICMP_INFO_REPLY		16	/* Information Reply		*/
-#define ICMP_ADDRESS		17	/* Address Mask Request		*/
-#define ICMP_ADDRESSREPLY	18	/* Address Mask Reply		*/
-#define NR_ICMP_TYPES		18
 int echoreply = 0;
 int destUnreach = 0;
 int sourceQuench = 0;
@@ -56,18 +27,57 @@ int infoRequest = 0;
 int infoReply = 0;
 int address = 0;
 int addressReply = 0;
+int otherType = 0;
+
+bool isTimeOut = false;
+
+void sigAlrm(int signo)
+{
+    isTimeOut = true;
+}
+
+void statistics()
+{
+    cout<<"ICMP_ECHOREPLY: "<<echoreply<<"\n";
+    cout<<"ICMP_DEST_UNREACH: "<<destUnreach<<"\n";
+    cout<<"ICMP_SOURCE_QUENCH: "<<sourceQuench<<"\n";
+    cout<<"ICMP_REDIRECT: "<<redirect<<"\n";
+    cout<<"ICMP_ECHO: "<<echo<<"\n";
+    cout<<"ICMP_TIME_EXCEEDED: "<<timeExceeded<<"\n";
+    cout<<"ICMP_PARAMETERPROB: "<<parameterprob<<"\n";
+    cout<<"ICMP_TIMESTAMP: "<<timestamp<<"\n";
+    cout<<"ICMP_TIMESTAMPREPLY: "<<timestampReply<<"\n";
+    cout<<"ICMP_INFO_REQUEST: "<<infoRequest<<"\n";
+    cout<<"ICMP_INFO_REPLY: "<<infoReply<<"\n";
+    cout<<"ICMP_ADDRESS: "<<address<<"\n";
+    cout<<"ICMP_ADDRESSREPLY: "<<addressReply<<"\n";
+    cout<<"OtherType: "<<otherType<<"\n";
+}
+
+bool analyData(char* dataBuf, int dataLen)
+{
+    struct iphdr* pIpHdr;
+    struct icmphdr* pIcmpHdr;
+    pIpHdr  = (struct iphdr*)dataBuf;
+    if(((int)pIpHdr->protocol) == IPPROTO_ICMP)
+    {
+        pIcmpHdr = (struct icmphdr*)(dataBuf + pIpHdr->ihl * 4);
         switch(pIcmpHdr->type)
         {
-            case ICMP_ECHOREPLY: ++echoreply;
-            case ICMP_DEST_UNREACH: ++destUnreach;
-            case ICMP_SOURCE_QUENCH: ++sourceQuench;
-            case ICMP_REDIRECT: ++redirect;
-            case ICMP_ECHO: ++echo;
-            case ICMP_TIME_EXCEEDED: ++timeExceeded;
-            case ICMP_PARAMETERPROB: ++parameterprob;
-            case ICMP_INFO_REQUEST: ++parameterprob;
-            case ICMP_ECHO: ++infoRequest;
-            case ICMP_ECHO: ++echo;
+            case ICMP_ECHOREPLY: ++echoreply;break;
+            case ICMP_DEST_UNREACH: ++destUnreach;break;
+            case ICMP_SOURCE_QUENCH: ++sourceQuench;break;
+            case ICMP_REDIRECT: ++redirect;break;
+            case ICMP_ECHO: ++echo;break;
+            case ICMP_TIME_EXCEEDED: ++timeExceeded;break;
+            case ICMP_PARAMETERPROB: ++parameterprob;break;
+            case ICMP_TIMESTAMP: ++timestamp;break;
+            case ICMP_TIMESTAMPREPLY: ++timestampReply;break;
+            case ICMP_INFO_REQUEST: ++infoRequest;break;
+            case ICMP_INFO_REPLY: ++infoReply;break;
+            case ICMP_ADDRESS: ++address;break;
+            case ICMP_ADDRESSREPLY: ++addressReply;break;
+            default: ++otherType;break;
         }
         return true;
     }else
@@ -77,7 +87,16 @@ int addressReply = 0;
 int main(int argc, char* argv[])
 {
 //    创建原始套接字
-    int sockId = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    int sockId;
+    char recvBuf[1024];
+    int recvDataLen = 0;
+    int servicetime = 3600 * 24;
+
+    if(argc == 2)
+    {
+        servicetime = atoi(argv[1]);
+    }
+    sockId = socket(PF_PACKET, SOCK_DGRAM, htons(ETH_P_IP));
     if(sockId < 0)
     {
         cout<<"need root user to create sockID"<<endl;
@@ -93,9 +112,13 @@ int main(int argc, char* argv[])
 //    接收数据
 //    struct sockaddr_in recvAddr;
 //    socklen_t addrLen = sizeof(recvAddr);
-    char recvBuf[1024];
-    int recvDataLen = 0;
-    while(true)
+    if(signal(SIGALRM, sigAlrm) == SIG_ERR)
+    {
+        cout<<"fail to set alarm signal function"<<"\n";
+        return 2;
+    }
+    alarm(servicetime);
+    while(!isTimeOut)
     {
         recvDataLen = recvfrom(sockId, recvBuf, 1024, 0, NULL, NULL);
         if(recvDataLen == 0)
@@ -104,13 +127,12 @@ int main(int argc, char* argv[])
             return 2;
         }
 //    分析数据
-        if(!analyData(recvBuf, recvDataLen))
-        {
-            cout<<"recveive error data"<<endl;
-            continue;
-        }
+//        if(!analyData(recvBuf, recvDataLen))
+//        {
+//            cout<<"recveive error data"<<endl;
+//        }
+        analyData(recvBuf, recvDataLen);
     }
-
-
+    statistics();
     return 0;
 }

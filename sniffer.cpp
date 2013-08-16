@@ -43,20 +43,49 @@ void sigAlrm(int signo)
 
 int setPromisc(char* etherName, int sockId)
 {
-    struct ifreq ifr;
-    strncpy(ifr.ifr_name, "eth0", strlen("eth0"));
-    if(ioctl(sockId, SIOCGIFFLAGS, &ifr) == -1)
+//    struct ifreq ifr;
+//    strncpy(ifr.ifr_name, "eth0", strlen("eth0"));
+//    if(ioctl(sockId, SIOCGIFFLAGS, &ifr) == -1)
+//    {
+//        perror("can't get ethernet interface info:");
+//        return -1;
+//    }
+//    ifr.ifr_flags |= IFF_PROMISC;
+//    if(ioctl(sockId, SIOCSIFFLAGS, &ifr) == -1)
+//    {
+//        cout<<"can't set ethernet interface info\n";
+//        return -2;
+//    }
+//    return 0;
+    char buf[1024];
+    struct ifconf ifcnf;
+    struct ifreq* pIfreq;
+
+    ifcnf.ifc_buf = buf;
+    ifcnf.ifc_len = 1024;
+
+    ioctl(sockId, SIOCGIFCONF, &ifcnf);
+
+    pIfreq = (struct ifreq*)buf;
+    int len = ifcnf.ifc_len / sizeof(struct ifreq);
+
+    for(int i = 0; i < len; ++i)
     {
-        perror("can't get ethernet interface info:");
-        return -1;
+        cout<<"name: "<<pIfreq[i].ifr_name<<endl;
+        if(strcmp(pIfreq[i].ifr_name, etherName) == 0)
+        {
+            if(ioctl(sockId, SIOCSIFFLAGS, pIfreq + i) == -1)
+            {
+                perror("can't set ethernet interface info:");
+                return -1;
+            }else
+            {
+                cout<<"set promisic"<<endl;
+                return 0;
+            }
+        }
     }
-    ifr.ifr_flags |= IFF_PROMISC;
-    if(ioctl(sockId, SIOCSIFFLAGS, &ifr) == -1)
-    {
-        cout<<"can't set ethernet interface info\n";
-        return -2;
-    }
-    return 0;
+    return -1;
 }
 
 void statistics()
@@ -85,6 +114,9 @@ bool analyData(char* dataBuf, int dataLen)
     if(((int)pIpHdr->protocol) == IPPROTO_ICMP)
     {
         pIcmpHdr = (struct icmphdr*)(dataBuf + pIpHdr->ihl * 4);
+        struct in_addr inAddr;
+        inAddr.s_addr = pIpHdr->daddr;
+        cout<<inet_ntoa(inAddr)<<endl;
         switch(pIcmpHdr->type)
         {
             case ICMP_ECHOREPLY: ++echoreply;break;
@@ -121,7 +153,7 @@ int main(int argc, char* argv[])
         servicetime = atoi(argv[1]);
     }
     sockId = socket(PF_PACKET, SOCK_DGRAM, htons(ETH_P_IP));
-    setPromisc("eth0", sockId);
+    //setPromisc("eth0", sockId);
     if(sockId < 0)
     {
         cout<<"need root user to create sockID"<<endl;

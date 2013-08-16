@@ -4,12 +4,17 @@
 #include <signal.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <sys/select.h>
 #include <sys/types.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
 #include <string>
 #include <sys/socket.h>
 #include <net/ethernet.h>
 #include <netdb.h>
 #include <arpa/inet.h>
+#include<stdio.h>
+#include<stdlib.h>
 #include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
 using namespace std;
@@ -34,6 +39,24 @@ bool isTimeOut = false;
 void sigAlrm(int signo)
 {
     isTimeOut = true;
+}
+
+int setPromisc(char* etherName, int sockId)
+{
+    struct ifreq ifr;
+    strncpy(ifr.ifr_name, "eth0", strlen("eth0"));
+    if(ioctl(sockId, SIOCGIFFLAGS, &ifr) == -1)
+    {
+        perror("can't get ethernet interface info:");
+        return -1;
+    }
+    ifr.ifr_flags |= IFF_PROMISC;
+    if(ioctl(sockId, SIOCSIFFLAGS, &ifr) == -1)
+    {
+        cout<<"can't set ethernet interface info\n";
+        return -2;
+    }
+    return 0;
 }
 
 void statistics()
@@ -91,12 +114,14 @@ int main(int argc, char* argv[])
     char recvBuf[1024];
     int recvDataLen = 0;
     int servicetime = 3600 * 24;
+    fd_set inputSet;
 
     if(argc == 2)
     {
         servicetime = atoi(argv[1]);
     }
     sockId = socket(PF_PACKET, SOCK_DGRAM, htons(ETH_P_IP));
+    setPromisc("eth0", sockId);
     if(sockId < 0)
     {
         cout<<"need root user to create sockID"<<endl;
@@ -120,18 +145,36 @@ int main(int argc, char* argv[])
     alarm(servicetime);
     while(!isTimeOut)
     {
-        recvDataLen = recvfrom(sockId, recvBuf, 1024, 0, NULL, NULL);
-        if(recvDataLen == 0)
+        FD_ZERO(&inputSet);
+        FD_SET(sockId, &inputSet);
+        FD_SET(STDIN_FILENO, &inputSet);
+        int maxId = max(sockId, STDIN_FILENO);
+        int rt = select(maxId + 1, &inputSet, NULL, NULL, NULL);
+        if(rt > 0)
         {
-            cout<<"system error"<<endl;
-            return 2;
+            if(FD_ISSET(STDIN_FILENO, &inputSet))
+            {
+                char c;
+                cin>>c;
+                if(c == 'q' || c == 'Q')
+                {
+                    break;
+                }else
+                {
+                    cout<<"input \"Q\" or \"q\" to quit the process!"<<endl;
+                }
+            }
+            if(FD_ISSET(sockId, &inputSet))
+            {
+                recvDataLen = recvfrom(sockId, recvBuf, 1024, 0, NULL, NULL);
+                if(recvDataLen == 0)
+                {
+                    cout<<"system error"<<endl;
+                    return 2;
+                }
+                analyData(recvBuf, recvDataLen);
+            }
         }
-//    分析数据
-//        if(!analyData(recvBuf, recvDataLen))
-//        {
-//            cout<<"recveive error data"<<endl;
-//        }
-        analyData(recvBuf, recvDataLen);
     }
     statistics();
     return 0;
